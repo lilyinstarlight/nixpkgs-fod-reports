@@ -1,0 +1,12 @@
+[package]
+name = "nixpkgs_fod_reports"
+version = "0.1.0"
+authors = ["Lily Foster <lily@lily.flowers>"]
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "^1.0"
+rayon = "^1.7"
+rustnix = "^0.0.1"
+tempfile = "^3.5"
