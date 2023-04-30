@@ -3,6 +3,10 @@ name = "nixpkgs_fod_reports"
 version = "0.1.0"
 authors = ["Lily Foster <lily@lily.flowers>"]
 edition = "2021"
+description = "Generate reports on FOD reproducibility in nixpkgs"
+readme = "readme.md"
+repository = "https://github.com/lilyinstarlight/nixpkgs-fod-reports"
+license = "MIT"
 publish = false
 
 [dependencies]
