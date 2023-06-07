@@ -13,4 +13,4 @@ publish = false
 anyhow = "^1.0"
 rayon = "^1.7"
 rustnix = "^0.0.1"
-tempfile = "^3.5"
+tempfile = "^3.6"
