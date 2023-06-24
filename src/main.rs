@@ -4,7 +4,7 @@ extern crate anyhow;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek};
+use std::io::{BufRead, BufReader, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::Mutex;
@@ -21,6 +21,16 @@ use rix::parsers::derivations;
 use tempfile::{tempdir, tempfile};
 
 fn run(cmd: &str, args: &[&str], path: &[&Path]) -> Result<File> {
+    let nixpkgs_config_dir =
+        tempdir().context("Creating temporary directory for Nixpkgs config")?;
+    let nixpkgs_config = nixpkgs_config_dir.path().join("nixpkgs-config.nix");
+
+    writeln!(
+        File::create(nixpkgs_config.clone()).context("Creating Nixpkgs config file")?,
+        "{{ allowAliases = false; }}"
+    )
+    .context("Writing Nixpkgs config file")?;
+
     let mut command = Command::new(cmd);
 
     command.env_clear();
@@ -28,6 +38,7 @@ fn run(cmd: &str, args: &[&str], path: &[&Path]) -> Result<File> {
         command.current_dir(path[0]);
     }
     command.env("HOME", "/homeless-shelter");
+    command.env("NIXPKGS_CONFIG", nixpkgs_config);
     command.env(
         "NIX_PATH",
         path.iter()
@@ -109,7 +120,11 @@ fn instantiate(nixpkgs: &Path, attr: &str, roots_path: &Path) -> Result<PathBuf>
             "-A",
             attr,
             "--add-root",
-            roots_path.join(attr).to_str().expect("Path to string"),
+            roots_path
+                .join("attrs")
+                .join(attr)
+                .to_str()
+                .expect("Path to string"),
         ],
         &[nixpkgs],
     )?;
@@ -150,6 +165,7 @@ fn realise(drv_path: &Path, roots_path: &Path) -> Result<PathBuf> {
             drv_path.to_str().expect("Path to string"),
             "--add-root",
             roots_path
+                .join("drvs")
                 .join(drv_path.file_name().expect("Derivation name"))
                 .to_str()
                 .expect("Path to string"),
@@ -175,6 +191,7 @@ fn check(drv_path: &Path) -> bool {
             "--realise",
             "--check",
             drv_path.to_str().expect("Path to string"),
+            "--no-gc-warning",
         ],
         &[],
     )
@@ -182,7 +199,9 @@ fn check(drv_path: &Path) -> bool {
 }
 
 fn delete(drv_path: &Path, roots_path: &Path) -> Result<()> {
-    let root_path = roots_path.join(drv_path.file_name().expect("Derivation name"));
+    let root_path = roots_path
+        .join("drvs")
+        .join(drv_path.file_name().expect("Derivation name"));
 
     run(
         "nix-store",
@@ -195,11 +214,21 @@ fn delete(drv_path: &Path, roots_path: &Path) -> Result<()> {
 }
 
 fn check_all_fods(nixpkgs: &Path) -> Result<HashMap<(String, PathBuf), bool>> {
-    let drvs = Mutex::new(HashMap::<PathBuf, String>::new());
+    let cache = env::var("NIXPKGS_FOD_REPORTS_DRV_CACHE").unwrap_or_default();
 
+    let drvs = Mutex::new(HashMap::<PathBuf, String>::new());
     let fods = Mutex::new(HashMap::<(String, PathBuf), bool>::new());
 
     let roots = tempdir().expect("Roots directory");
+
+    if !cache.is_empty() && Path::new(&cache).try_exists().unwrap_or(false) {
+        drvs.lock().expect("Acquiring derivation mutex").extend(
+            serde_json::from_str::<HashMap<PathBuf, String>>(
+                &fs::read_to_string(&cache).context("Reading derivation cache file")?,
+            )
+            .context("Deserializing derivation cache")?,
+        );
+    }
 
     println!("Generating attrs to check in {}", nixpkgs.display());
 
@@ -231,6 +260,15 @@ fn check_all_fods(nixpkgs: &Path) -> Result<HashMap<(String, PathBuf), bool>> {
                 .zip(iter::repeatn(attr.clone(), reqs.len())),
         );
     });
+
+    if !cache.is_empty() {
+        fs::write(
+            &cache,
+            serde_json::to_string(&*drvs.lock().expect("Acquiring derivation mutex"))
+                .context("Serializing derivation cache")?,
+        )
+        .context("Writing derivation cache file")?;
+    }
 
     drvs.lock()
         .expect("Acquiring derivation mutex")
