@@ -140,6 +140,12 @@ fn instantiate(nixpkgs: &Path, attr: &str, roots_path: &Path) -> Result<PathBuf>
     .context("Finding GC root target")
 }
 
+fn release(attr: &str, roots_path: &Path) -> Result<()> {
+    let root_path = roots_path.join("attrs").join(attr);
+
+    fs::remove_file(root_path).context("Deleting attribute GC root")
+}
+
 fn requisites(drv_path: &Path) -> Result<Vec<PathBuf>> {
     let output = run(
         "nix-store",
@@ -254,6 +260,10 @@ fn check_all_fods(nixpkgs: &Path) -> Result<HashMap<(String, PathBuf), bool>> {
             vec![]
         };
 
+        if let Err(_err) = release(attr, roots.path()) {
+            eprintln!("Failed to release derivation root for {}, ignoring", attr);
+        }
+
         drvs.lock().expect("Acquiring derivation mutex").par_extend(
             reqs.par_iter()
                 .cloned()
@@ -274,28 +284,55 @@ fn check_all_fods(nixpkgs: &Path) -> Result<HashMap<(String, PathBuf), bool>> {
         .expect("Acquiring derivation mutex")
         .par_iter()
         .for_each(|(drv, attr)| {
-            if is_fod(drv).expect("Checking whether derivation is a FOD") {
-                println!("Realising {}", drv.display());
-
-                if let Ok(path) = realise(drv, roots.path()) {
-                    fods.lock()
-                        .expect("Acquiring FOD result mutex")
-                        .insert((attr.clone(), drv.to_owned()), check(drv));
-
-                    if let Err(_err) = delete(drv, roots.path()) {
-                        eprintln!(
-                            "Error removing root and output path from {} at {}",
-                            drv.display(),
-                            path.display(),
-                        );
-                    }
-                } else {
+            if !drv.exists() {
+                if let Err(_err) = instantiate(nixpkgs, attr, roots.path()) {
                     eprintln!(
-                        "Error realising derivation from {} at {}",
+                        "Error re-instantiating derivation from {} at {}",
                         attr,
-                        drv.display(),
+                        drv.display()
                     );
                 }
+            }
+
+            match is_fod(drv) {
+                Ok(fod) => {
+                    if !fod {
+                        return;
+                    }
+                }
+                Err(_err) => {
+                    eprintln!(
+                        "Error checking whether derivation at {} is a FOD, assuming not",
+                        drv.display()
+                    );
+                    return;
+                }
+            }
+
+            println!("Realising {}", drv.display());
+
+            if let Ok(path) = realise(drv, roots.path()) {
+                fods.lock()
+                    .expect("Acquiring FOD result mutex")
+                    .insert((attr.clone(), drv.to_owned()), check(drv));
+
+                if let Err(_err) = release(attr, roots.path()) {
+                    eprintln!("Failed to release derivation root for {}, ignoring", attr);
+                }
+
+                if let Err(_err) = delete(drv, roots.path()) {
+                    eprintln!(
+                        "Error removing root and output path from {} at {}",
+                        drv.display(),
+                        path.display(),
+                    );
+                }
+            } else {
+                eprintln!(
+                    "Error realising derivation from {} at {}",
+                    attr,
+                    drv.display(),
+                );
             }
         });
 
