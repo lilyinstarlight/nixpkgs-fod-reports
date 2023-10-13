@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: DeterminateSystems/nix-installer-action@v5
+      - uses: DeterminateSystems/nix-installer-action@v6
 
       - id: update-flake-lock
         uses: DeterminateSystems/update-flake-lock@v20
