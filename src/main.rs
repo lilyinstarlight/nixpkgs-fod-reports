@@ -16,7 +16,7 @@ use rayon::prelude::{
     IndexedParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
 };
 
-use rix::parsers::derivations;
+use regex::bytes::Regex;
 
 use tempfile::{tempdir, tempfile};
 
@@ -72,24 +72,10 @@ fn run(cmd: &str, args: &[&str], path: &[&Path]) -> Result<File> {
     }
 }
 
-fn get_output_hash(drv_path: &Path) -> Result<Option<String>> {
-    let drv = fs::read_to_string(drv_path)
-        .context(format!("Reading derivation {}", drv_path.display()))?;
-
-    let parsed =
-        derivations::parse_derivation(&drv).map_err(|_| anyhow!("Could not parse derivation"))?;
-
-    Ok(parsed
-        .1
-        .outputs
-        .get("out")
-        .ok_or(anyhow!("No output named 'out'"))?
-        .hash
-        .clone())
-}
-
 fn is_fod(drv_path: &Path) -> Result<bool> {
-    Ok(get_output_hash(drv_path)?.is_some())
+    let drv = fs::read(drv_path).context(format!("Reading derivation {}", drv_path.display()))?;
+
+    Ok(Regex::new(r#"(?-u)^Derive\(\s*\[\s*\(\s*"(?:[^"]+)"\s*,\s*"(?:[^"]+)"\s*,\s*"(?:[^"]+)"\s*,\s*"(?:[^"]+)"\s*\)"#).unwrap().is_match(&drv))
 }
 
 fn attrs(nixpkgs: &Path) -> Result<Vec<String>> {
